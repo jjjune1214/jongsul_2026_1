@@ -1,0 +1,70 @@
+#include <Servo.h>
+#include <Wire.h>
+#include <Adafruit_PWMServoDriver.h>
+
+Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x40);
+
+// === MG996R 모터에 맞춘 안전 범위 ===
+// PCA9685 보드에서 50Hz 기준 (0~4095 해상도)
+// MG996R의 일반적인 펄스 폭: 약 500us ~ 2500us
+#define SERVOMIN 102  // 최소 펄스 길이 (0도 부근, 약 500us)
+#define SERVOMAX 512  // 최대 펄스 길이 (180도 부근, 약 2500us)
+
+// [수정] 모터 개수를 8개에서 3개로 변경
+const int NUM_SERVOS = 3;
+int currentAngles[NUM_SERVOS] = {90, 90, 90};
+
+void setup() {
+  Serial.begin(115200);
+  Serial.setTimeout(5); // 짧은 타임아웃 설정으로 30FPS 통신 지연 최소화
+
+  pwm.begin();
+  pwm.setPWMFreq(50); // MG996R 모터 구동을 위한 50Hz 주파수 설정
+  
+  delay(100);
+
+  // [수정] 3개의 모터 초기화 (각각 90도 전송)
+  for(int i=0; i<NUM_SERVOS; i++) {
+    setServoAngle(i, 90);
+  }
+  Serial.println("Arduino Ready (3 Servos Mode).");
+}
+
+void loop() {
+  if (Serial.available() > 0) {
+    int receivedAngles[NUM_SERVOS];
+    bool dataValid = true;
+
+    // 파이썬에서 송신한 3개의 각도 데이터를 읽음 (예: "90 120 45\n")
+    for (int i = 0; i < NUM_SERVOS; i++) {
+      receivedAngles[i] = Serial.parseInt();
+      
+      // 각도 범위 유효성 검사 (0~180도를 벗어나면 데이터 무시)
+      if (receivedAngles[i] < 0 || receivedAngles[i] > 180) {
+        dataValid = false;
+      }
+    }
+
+    // 데이터 패킷 끝의 줄바꿈 문자('\n')를 확인하여 동기화 맞춤
+    if (Serial.read() == '\n') {
+      if (dataValid) {
+        // 기존 각도와 비교하여 변경된 모터만 독립적으로 구동
+        for (int i = 0; i < NUM_SERVOS; i++) {
+          if (receivedAngles[i] != currentAngles[i]) {
+            setServoAngle(i, receivedAngles[i]);
+            currentAngles[i] = receivedAngles[i]; // 현재 각도 갱신
+          }
+        }
+      }
+    }
+  }
+}
+
+void setServoAngle(int servoNum, int angle) {
+  if (angle < 0) angle = 0;
+  if (angle > 180) angle = 180;
+
+  // 서보 각도(0~180)를 PCA9685 펄스 값(SERVOMIN~SERVOMAX)으로 매핑
+  int pulse = map(angle, 0, 180, SERVOMIN, SERVOMAX);
+  pwm.setPWM(servoNum, 0, pulse);
+}
